@@ -1,0 +1,168 @@
+import sys
+import time
+import digitalio
+import busio
+import board
+import pwmio
+from adafruit_ov7670 import (  
+    OV7670,
+    OV7670_SIZE_DIV16,
+    OV7670_COLOR_YUV,
+)
+
+# Configuración de LED
+led = digitalio.DigitalInOut(board.GP28)
+led.direction = digitalio.Direction.OUTPUT
+led.value = True  # Mantener el LED encendido
+
+led_1 = digitalio.DigitalInOut(board.GP27)
+led_1.direction = digitalio.Direction.OUTPUT
+led_1.value = True  # Mantener otro LED encendido
+
+# Configuración de los motores
+motor_A1 = pwmio.PWMOut(board.GP16, frequency=2000)  # Motor A, en dirección 1
+motor_A2 = pwmio.PWMOut(board.GP17, frequency=2000)  # Motor A, en dirección 2
+motor_B1 = pwmio.PWMOut(board.GP18, frequency=2000)  # Motor B, en dirección 1
+motor_B2 = pwmio.PWMOut(board.GP19, frequency=2000)  # Motor B, en dirección 2
+
+# Parámetros
+max_pwm = 65535
+max_vel = max_pwm * 0.90  # Velocidad máxima ajustada
+tolerancia = 1.5  # Rango para considerar el carro centrado
+
+# Función para ajustar los motores según el centro de la pista
+def ajustar_motores(promedio_centro):
+
+    # Definir un valor de giro constante
+    giro_constante = 0.6 * max_vel  # La cantidad de giro que se aplicará
+
+    # Si el carro está desviado a la izquierda
+    if promedio_centro < -tolerancia:
+        # El motor izquierdo se detiene y el derecho gira
+        motor_A1.duty_cycle = int(giro_constante*0.7)
+        motor_A2.duty_cycle = 0
+        motor_B1.duty_cycle = int(giro_constante)  # Motor derecho adelante
+        motor_B2.duty_cycle = 0
+        print("Derechax")
+    
+        time.sleep(0.09)
+        motor_B1.duty_cycle = 0
+        motor_B2.duty_cycle = 0
+        motor_A1.duty_cycle = 0
+        motor_A2.duty_cycle = 0
+        
+        
+    # Si el carro está desviado a la derecha
+    elif promedio_centro > tolerancia:
+        # El motor derecho se detiene y el izquierdo gira
+        motor_A1.duty_cycle = int(giro_constante)  # Motor izquierdo adelante
+        motor_A2.duty_cycle = 0
+        motor_B1.duty_cycle = int(giro_constante*0.7)
+        motor_B2.duty_cycle = 0
+        print("Izquierda")
+        time.sleep(0.09)
+        motor_B1.duty_cycle = 0
+        motor_B2.duty_cycle = 0
+        motor_A1.duty_cycle = 0
+        motor_A2.duty_cycle = 0
+
+
+# Si el carro está centrado
+    else:
+        # Ambos motores siguen hacia adelante
+        motor_A1.duty_cycle = int(max_vel*0.7)
+        motor_A2.duty_cycle = 0
+        motor_B1.duty_cycle = int(max_vel*0.7)
+        motor_B2.duty_cycle = 0
+
+        print("Derecho")
+        time.sleep(0.09)
+        motor_B1.duty_cycle = 0
+        motor_B2.duty_cycle = 0
+        motor_A1.duty_cycle = 0
+        motor_A2.duty_cycle = 0
+
+# Configuración de la cámara
+cam_bus = busio.I2C(scl=board.GP21, sda=board.GP20)
+
+cam = OV7670(
+    cam_bus,
+    data_pins=[
+        board.GP0, board.GP1, board.GP2, board.GP3, board.GP4, board.GP5, board.GP6, board.GP7,
+    ],
+    clock=board.GP8,
+    vsync=board.GP13,
+    href=board.GP12,
+    mclk=board.GP9,
+    shutdown=board.GP15,
+    reset=board.GP14,
+)
+cam.size = OV7670_SIZE_DIV16
+cam.colorspace = OV7670_COLOR_YUV
+
+print(cam.width, cam.height)
+
+buf = bytearray(2 * cam.width * cam.height)
+
+# Definición de rangos para negro y blanco
+limite_negro = 110
+limite_blanco = 255
+
+width = cam.width
+row = bytearray(2 * width)
+
+
+# Evaluación de las filas
+fila_central = cam.height // 2
+fila_central_1 = fila_central - 1
+fila_central_2 = fila_central + 1
+
+
+
+while True:
+    cam.capture(buf)
+    print("Matriz completa capturada:")
+    for j in range(fila_central_1 - 1, fila_central_2):
+        for i in range(cam.width):
+            luminancia = buf[2 * (cam.width * j + i)]
+            if luminancia <= limite_negro:
+                row[i * 2] = row[i * 2 + 1] = ord('0')
+            else:
+                row[i * 2] = row[i * 2 + 1] = ord('1')
+        print(row.decode('ascii'))
+
+    print("\nEvaluando filas específicas:\n")
+
+    # Variables para acumulación
+    centros = []
+
+    for fila in [fila_central, fila_central_1, fila_central_2]:
+        suma_pesos = 0
+        suma_valores = 0
+
+        for i in range(cam.width):
+            luminancia = buf[2 * (cam.width * fila + i)]
+            valor = 0 if luminancia <= limite_negro else 1
+            peso = i - (cam.width // 2)
+            suma_pesos += peso * valor
+            suma_valores += valor
+
+        if suma_valores > 0:
+            centros.append(suma_pesos / suma_valores)
+        else:
+            centros.append(None)
+
+    # Combinación de resultados
+    valid_centros = [c for c in centros if c is not None]
+    if valid_centros:
+        promedio_centro = sum(valid_centros) / len(valid_centros)
+        print(f"Centro relativo promedio: {promedio_centro:.2f}")
+    else:
+        print("Pista no detectada en las filas evaluadas.")
+        promedio_centro = 0  # No se detectó pista
+
+    ajustar_motores(promedio_centro)
+
+    print("\n---\n")
+    time.sleep(0.04)
+
