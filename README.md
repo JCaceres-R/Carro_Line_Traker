@@ -71,9 +71,6 @@ El código se organiza en las siguientes secciones:
 
 Este proyecto es fruto del trabajo colaborativo de los integrantes mencionados. Cada miembro aportó en diferentes áreas: diseño del algoritmo, implementación del hardware, programación del software y pruebas del sistema.
 
-## Licencia
-
-Este proyecto es de código abierto y se distribuye bajo la [MIT License](LICENSE).
 
 ## Contacto
 
